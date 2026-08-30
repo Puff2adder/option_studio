@@ -1,16 +1,18 @@
-"""Options Strategy Learning Studio - Version 1.0."""
+"""Options Strategy Learning Studio - Version 2.0."""
 
 from __future__ import annotations
 
 from math import exp
+import secrets
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from challenge_bank import replication_challenges, strategy_design_challenges
 from pricing import option_chain, price_lookup
-from question_bank import QUESTIONS, generated_question
+from question_bank import QUESTIONS, generated_question, shuffled_choices
 from replication import (
     calls_only_replication,
     parse_fractional_number,
@@ -69,7 +71,7 @@ if st.session_state.get("market_unit_schema") != "percentage_points":
 
 
 st.sidebar.title("Options Strategy Studio")
-st.sidebar.caption("Version 1.0 · European options · hypothetical data")
+st.sidebar.caption("Version 2.0 · European options · hypothetical data")
 navigation = st.sidebar.radio(
     "Learning laboratory",
     [
@@ -77,9 +79,10 @@ navigation = st.sidebar.radio(
         "1 · Create the market",
         "2 · Single positions",
         "3 · Strategy builder",
-        "4 · Calls-only replication",
-        "5 · Guided applications",
-        "6 · Knowledge check",
+        "4 · Strategy design problems",
+        "5 · Replication problem sets",
+        "6 · Guided applications",
+        "7 · Knowledge check",
     ],
 )
 st.sidebar.divider()
@@ -195,15 +198,16 @@ if navigation == "Studio orientation":
             1. Create a hypothetical but internally consistent option market.
             2. Separate **payoff** from **profit** for individual positions.
             3. Mesh stock, a riskless bond, calls, and puts into a strategy.
-            4. Reverse-engineer a target payout using stock, a bond, and calls.
-            5. Apply the ideas to operating risks, portfolios, and corporate contracts.
+            4. Solve economic design problems without beginning from a named strategy.
+            5. Reverse-engineer target payouts and value them using the Law of One Price.
+            6. Apply the ideas to operating risks, portfolios, and corporate contracts.
             """
         )
     with right:
         st.info("This is an ungraded practice laboratory. Try a position, inspect the table, explain the shape, and reset as often as useful.")
         st.markdown("**Sign convention**")
         st.markdown("Positive quantity = long or purchased position. Negative quantity = short or sold position.")
-        st.markdown("**Version 1 profit convention**")
+        st.markdown("**Version 2 profit convention**")
         st.markdown("Profit equals terminal payoff minus initial net cost. Financing can be displayed as an optional extension.")
     why_it_matters("Executives rarely want to eliminate every uncertain outcome. Options allow them to reshape exposure by transferring selected states of the world.")
     st.subheader("A critical distinction")
@@ -227,7 +231,7 @@ elif navigation == "1 · Create the market":
     fig.add_vline(x=spot, line_dash="dot", line_color="#d9a441", annotation_text="Stock price")
     fig.update_layout(template="plotly_white", height=390, xaxis_title="Strike", yaxis_title="Black-Scholes price",
                       margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", y=1.08))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width="stretch", key="market_option_chain_chart")
     concept("Model assumptions", "European exercise; no arbitrage; continuously compounded risk-free and dividend rates; constant volatility; frictionless trading; lognormal stock prices.")
     st.subheader("Pause and predict")
     st.markdown("- If volatility rises, what happens to both call and put prices?\n- As the strike rises, why do calls generally become cheaper while puts become more expensive?\n- Why is a tiny parity error reassuring?")
@@ -251,7 +255,11 @@ elif navigation == "2 · Single positions":
     m2.metric("Initial signed cost", signed_money(initial_cost))
     be = break_even_points(grid, scenarios["Profit"].to_numpy())
     m3.metric("Break-even", ", ".join(f"${x:,.2f}" for x in be) if be else "None in range")
-    st.plotly_chart(strategy_chart(scenarios, [strike]), width="stretch")
+    st.plotly_chart(
+        strategy_chart(scenarios, [strike]),
+        width="stretch",
+        key="single_position_payoff_profit_chart",
+    )
     table_prices = sorted(set([max(0, strike - 20), strike - 10, strike, strike + 10, strike + 20]))
     table = strategy_scenarios(np.array(table_prices), 0.0, 0.0, positions, initial_cost)
     st.dataframe(table.round(2), width="stretch", hide_index=True)
@@ -328,47 +336,274 @@ elif navigation == "3 · Strategy builder":
                                     result["multiplier"], financed)
         st.dataframe(sample.round(2), width="stretch", hide_index=True)
         st.subheader("C. Diagram second")
-        st.plotly_chart(strategy_chart(scenarios, [float(p["strike"]) for p in positions], show_components), width="stretch")
+        st.plotly_chart(
+            strategy_chart(scenarios, [float(p["strike"]) for p in positions], show_components),
+            width="stretch",
+            key="strategy_builder_payoff_profit_chart",
+        )
         concept("Read the shape through slopes", "Stock contributes slope everywhere. A call changes slope above its strike. A put changes slope below its strike. The riskless bond changes the level, not the slope.")
         why_it_matters("The net cost tells us what the engineered payoff costs today. The terminal table shows exactly which component creates each region of the diagram.")
     else:
-        st.info("All positions are currently zero. Enter any combination—including a straddle, strangle, spread, butterfly, collar, or a structure of your own—and select **Calculate strategy**.")
+        st.info("All positions are currently zero. Enter any signed combination of stock, bonds, calls, and puts, then select **Calculate strategy**.")
 
-elif navigation == "4 · Calls-only replication":
-    st.title("4. Calls-only replication laboratory")
-    hero("Reverse-engineer the payout", "Study the target first. Then attempt a portfolio of riskless bonds, stock, and calls before unlocking the slope hints.")
-    preset = st.selectbox("Target payout", ["Merger collar", "Capped stock", "Call spread", "Custom piecewise-linear payout"])
-    low, high = strikes[2], strikes[-3]
+elif navigation == "4 · Strategy design problems":
+    st.title("4. Strategy design problems")
+    hero(
+        "Begin with a belief or decision—not a strategy name",
+        "Construct signed stock, bond, call, and put positions. Then inspect both terminal payoff and profit.",
+    )
+    challenges = strategy_design_challenges(float(spot), strikes)
+    challenge_index = st.selectbox(
+        "Choose a problem",
+        range(len(challenges)),
+        format_func=lambda i: f"{challenges[i]['difficulty']} · {challenges[i]['title']}",
+    )
+    challenge = challenges[challenge_index]
+    challenge_id = f"{challenge['id']}_{hash(signature)}"
+    st.subheader(challenge["title"])
+    st.write(challenge["setting"])
+    concept("Required payoff behavior", challenge["payoff_goal"])
+    st.markdown("**Questions to answer before entering positions**")
+    for question in challenge["questions"]:
+        st.markdown(f"- {question}")
+
+    st.subheader("Construct and test your position")
+    st.caption(
+        "Positive quantities purchase rights or assets. Negative quantities write options, short assets, "
+        "or borrow through a negative riskless payoff. No strategy-name menu is provided."
+    )
+    nonce_key = f"design_nonce_{challenge_id}"
+    st.session_state.setdefault(nonce_key, 0)
+    checked_key = f"design_checked_{challenge_id}"
+    revealed_key = f"design_revealed_{challenge_id}"
+    reset_col, instruction_col = st.columns([0.28, 0.72])
+    if reset_col.button("Reset this attempt", key=f"design_reset_{challenge_id}", width="stretch"):
+        st.session_state[nonce_key] += 1
+        st.session_state.pop(checked_key, None)
+        st.session_state.pop(revealed_key, None)
+        st.rerun()
+    instruction_col.caption("Try more than once. Feedback and slope tips appear only after you check an attempt.")
+    nonce = st.session_state[nonce_key]
+    q1, q2 = st.columns(2)
+    design_stock = q1.number_input(
+        "Shares / units of stock",
+        step=0.25,
+        value=0.0,
+        key=f"design_stock_{challenge_id}_{nonce}",
+    )
+    design_bond = q2.number_input(
+        "Face value of riskless payoff at expiration",
+        step=5.0,
+        value=0.0,
+        key=f"design_bond_{challenge_id}_{nonce}",
+    )
+    design_table = st.data_editor(
+        empty_position_table(),
+        width="stretch",
+        hide_index=True,
+        disabled=["Strike"],
+        key=f"design_editor_{challenge_id}_{nonce}",
+        column_config={
+            "Strike": st.column_config.NumberColumn(format="$%.2f"),
+            "Calls": st.column_config.NumberColumn(step=0.25, format="%.5g"),
+            "Puts": st.column_config.NumberColumn(step=0.25, format="%.5g"),
+        },
+    )
+    if st.button("Check this design", type="primary", width="stretch", key=f"design_check_{challenge_id}_{nonce}"):
+        st.session_state[checked_key] = nonce
+    design_checked = st.session_state.get(checked_key) == nonce
+
+    design_positions = active_option_positions(design_table)
+    design_costs = component_costs(
+        spot, rate, maturity, float(design_stock), float(design_bond), design_positions, prices
+    )
+    design_net_cost = float(design_costs["Signed cost"].sum())
+    design_grid = np.linspace(max(0.0, 0.25 * spot), 1.75 * spot, 401)
+    design_scenarios = strategy_scenarios(
+        design_grid, float(design_stock), float(design_bond), design_positions, design_net_cost
+    )
+    solution_spec = challenge["solution"]
+    target_scenarios = strategy_scenarios(
+        design_grid,
+        float(solution_spec["stock"]),
+        float(solution_spec["bond"]),
+        solution_spec["positions"],
+        0.0,
+    )
+    design_error = float(
+        np.max(
+            np.abs(
+                design_scenarios["Total payoff"].to_numpy()
+                - target_scenarios["Total payoff"].to_numpy()
+            )
+        )
+    )
+
+    if design_checked:
+        a, b, c = st.columns(3)
+        a.metric("Net initial cost", signed_money(design_net_cost))
+        design_profit = design_scenarios["Profit"].to_numpy()
+        if np.all(np.abs(design_profit) < 1e-10):
+            break_even_label = "Every price (zero position)"
+        else:
+            roots = break_even_points(design_grid, design_profit)
+            break_even_label = ", ".join(f"${value:.2f}" for value in roots) if roots else "None in range"
+        b.metric("Break-even price(s)", break_even_label)
+        c.metric("Maximum payoff-shape difference", f"${design_error:.4f}")
+        if replication_matches(design_error):
+            st.success("Your positions create the required terminal payoff shape.")
+        else:
+            st.warning("The payoff does not yet match the required behavior. Compare the slope in each price region.")
+
+        st.markdown("### A. Component cost and profit")
+        design_cost_view = design_costs.copy()
+        design_total_row = pd.DataFrame(
+            [{"Component": "TOTAL NET COST", "Quantity": np.nan, "Unit price": np.nan, "Signed cost": design_net_cost}]
+        )
+        st.dataframe(
+            pd.concat([design_cost_view, design_total_row], ignore_index=True),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Quantity": st.column_config.NumberColumn(format="%.5g"),
+                "Unit price": st.column_config.NumberColumn(format="$%.4f"),
+                "Signed cost": st.column_config.NumberColumn(format="$%.2f"),
+            },
+        )
+        st.plotly_chart(
+            strategy_chart(design_scenarios, [float(position["strike"]) for position in design_positions], True),
+            width="stretch",
+            key="strategy_design_attempt_chart",
+        )
+
+        st.markdown("### B. Compare your payoff with the required shape")
+        comparison_fig = go.Figure()
+        comparison_fig.add_trace(
+            go.Scatter(
+                x=design_grid,
+                y=target_scenarios["Total payoff"],
+                mode="lines",
+                name="Required payoff shape",
+                line=dict(color="#c94f45", width=5),
+            )
+        )
+        comparison_fig.add_trace(
+            go.Scatter(
+                x=design_grid,
+                y=design_scenarios["Total payoff"],
+                mode="lines",
+                name="Your payoff",
+                line=dict(color="#17365d", width=3, dash="dash"),
+            )
+        )
+        comparison_fig.update_layout(
+            template="plotly_white",
+            height=420,
+            xaxis_title="Stock price at expiration, S_T",
+            yaxis_title="Terminal payoff",
+            margin=dict(l=20, r=20, t=30, b=20),
+            legend=dict(orientation="h", y=1.08),
+        )
+        st.plotly_chart(comparison_fig, width="stretch", key="strategy_design_comparison_chart")
+        sample_prices = np.linspace(max(0.0, 0.50 * spot), 1.50 * spot, 9)
+        sample_attempt = strategy_scenarios(
+            sample_prices, float(design_stock), float(design_bond), design_positions, design_net_cost
+        )
+        st.dataframe(sample_attempt.round(2), width="stretch", hide_index=True)
+
+        st.markdown("### C. Progressive tips")
+        for tip_number, tip in enumerate(challenge["tips"], start=1):
+            with st.expander(f"Tip {tip_number}"):
+                st.write(tip)
+        if st.button("Reveal one exact construction", key=f"design_reveal_{challenge_id}_{nonce}"):
+            st.session_state[revealed_key] = nonce
+        if st.session_state.get(revealed_key) == nonce:
+            solution_costs = component_costs(
+                spot,
+                rate,
+                maturity,
+                float(solution_spec["stock"]),
+                float(solution_spec["bond"]),
+                solution_spec["positions"],
+                prices,
+            )
+            solution_cost = float(solution_costs["Signed cost"].sum())
+            solution_scenarios = strategy_scenarios(
+                design_grid,
+                float(solution_spec["stock"]),
+                float(solution_spec["bond"]),
+                solution_spec["positions"],
+                solution_cost,
+            )
+            st.dataframe(solution_costs, width="stretch", hide_index=True)
+            st.metric("Initial cost of this exact construction", signed_money(solution_cost))
+            st.plotly_chart(
+                strategy_chart(
+                    solution_scenarios,
+                    [float(position["strike"]) for position in solution_spec["positions"]],
+                    True,
+                ),
+                width="stretch",
+                key="strategy_design_solution_chart",
+            )
+            success_box("Economic interpretation", challenge["interpretation"])
+    else:
+        st.info("Enter a position and select **Check this design** before opening any tips or solutions.")
+
+    why_it_matters(
+        "A general calculator becomes a learning tool when the student must translate a belief or decision into "
+        "rights, obligations, slopes, costs, and retained risks."
+    )
+
+elif navigation == "5 · Replication problem sets":
+    st.title("5. Calls-only replication problem sets")
+    hero(
+        "Reverse-engineer and value an economically motivated payout",
+        "Match levels and slopes first. After the payoff is correct, use component prices and the Law of One Price.",
+    )
     high_node = max(strikes[-1] + (strikes[-1] - strikes[-2]), round(1.55 * spot, 2))
     nodes = np.array([0.0] + strikes + [high_node], dtype=float)
-    if preset == "Merger collar":
-        guarantee = float(spot)
-        values = np.where(nodes < low, guarantee / low * nodes,
-                          np.where(nodes <= high, guarantee, guarantee + 0.5 * (nodes - high)))
-        later_nodes = [value for value in strikes if value > high][:2]
-        examples = ", ".join(
-            f"X({value:g}) = {guarantee + 0.5 * (value - high):.2f}" for value in later_nodes
-        )
-        story = (
-            f"The payout rises from zero to {guarantee:g} below {low:g}; it is flat at {guarantee:g} "
-            f"from {low:g} through {high:g}; above {high:g} its slope is exactly 0.50. "
-            f"Therefore {examples}."
-        )
-    elif preset == "Capped stock":
-        cap = strikes[len(strikes) // 2]
-        values = np.minimum(nodes, cap)
-        story = f"The payout follows the stock until {cap:g}, then becomes flat. This can be built with stock and one short call."
-    elif preset == "Call spread":
-        values = np.maximum(nodes - low, 0) - np.maximum(nodes - high, 0)
-        story = f"The payout begins at {low:g} and stops increasing at {high:g}."
+    replication_bank = replication_challenges(float(spot), strikes, nodes)
+    replication_options = list(range(len(replication_bank) + 1))
+    replication_index = st.selectbox(
+        "Choose a replication problem",
+        replication_options,
+        format_func=lambda i: (
+            f"{replication_bank[i]['difficulty']} · {replication_bank[i]['title']}"
+            if i < len(replication_bank)
+            else "Open laboratory · Custom piecewise-linear payout"
+        ),
+    )
+    is_custom_replication = replication_index == len(replication_bank)
+    if is_custom_replication:
+        replication_problem = {
+            "id": "custom_piecewise",
+            "title": "Custom piecewise-linear payout",
+            "story": (
+                "Edit the target payout at the nodes. The laboratory draws straight lines between nodes and "
+                "continues the final slope beyond the last node."
+            ),
+            "decision": "Create any continuous target, replicate it, and determine its no-arbitrage value.",
+            "values": nodes.copy(),
+            "interpretation": "Every continuous piecewise-linear payout can be decomposed into a level, an initial slope, and slope changes at calls' strikes.",
+        }
     else:
+        replication_problem = replication_bank[replication_index]
+    preset = replication_problem["id"]
+    values = np.asarray(replication_problem["values"], dtype=float)
+    st.subheader(replication_problem["title"])
+    concept("Economic setting", replication_problem["story"])
+    st.markdown(f"**Your task:** {replication_problem['decision']}")
+    st.markdown(
+        "Before entering positions, identify the payout level at zero, the leftmost slope, every strike where "
+        "the slope changes, and the size of each change."
+    )
+    if is_custom_replication:
         values = nodes.copy()
-        story = "Edit the target payout at the nodes. The laboratory interprets straight lines between them and continues the final slope beyond the last node."
-    concept("Target story", story)
     target_input = pd.DataFrame({"Stock price node": nodes, "Target payout": values})
     target_columns = {"Stock price node": st.column_config.NumberColumn(format="$%.2f"),
                       "Target payout": st.column_config.NumberColumn(format="$%.2f", step=0.50)}
-    if preset == "Custom piecewise-linear payout":
+    if is_custom_replication:
         edited_target = st.data_editor(target_input, width="stretch", hide_index=True,
                                        disabled=["Stock price node"], key=f"target_{preset}_{hash(signature)}",
                                        column_config=target_columns)
@@ -386,7 +621,7 @@ elif navigation == "4 · Calls-only replication":
     target_fig.update_layout(template="plotly_white", height=350, xaxis_title="Stock price at expiration, S_T",
                              yaxis_title="Target payout", margin=dict(l=20, r=20, t=25, b=20))
     mark_replication_strikes(target_fig, strikes, [pos["strike"] for pos in active_calls])
-    st.plotly_chart(target_fig, width="stretch")
+    st.plotly_chart(target_fig, width="stretch", key="replication_target_chart")
     st.caption("Every available strike is labeled on the horizontal axis. Gold dotted lines identify strikes where the target slope changes.")
 
     st.subheader("Your attempted replication")
@@ -444,7 +679,8 @@ elif navigation == "4 · Calls-only replication":
         max_attempt_error = float(np.max(np.abs(attempt_error)))
         st.metric("Maximum difference between your payout and the target", f"${max_attempt_error:.6f}")
         checking_tolerance = 0.01
-        if replication_matches(max_attempt_error, checking_tolerance):
+        replication_correct = replication_matches(max_attempt_error, checking_tolerance)
+        if replication_correct:
             if max_attempt_error < 1e-8:
                 st.success("Exact replication. Your portfolio matches the target at every tested stock price.")
             else:
@@ -463,7 +699,84 @@ elif navigation == "4 · Calls-only replication":
                                   yaxis_title="Payout", margin=dict(l=20, r=20, t=25, b=20),
                                   legend=dict(orientation="h", y=1.08))
         mark_replication_strikes(attempt_fig, strikes, [pos["strike"] for pos in active_calls])
-        st.plotly_chart(attempt_fig, width="stretch")
+        st.plotly_chart(attempt_fig, width="stretch", key="replication_attempt_chart")
+
+        if replication_correct:
+            st.subheader("Law of One Price valuation")
+            st.write(
+                "Because your portfolio reproduces the target payout in every state, the target must have the same "
+                "value as the stock, bond, and calls used in your replication. Use the market prices below to "
+                "calculate that value before revealing the component arithmetic."
+            )
+            valuation_rows = [
+                {"Tradable component": "Stock", "Unit price today": float(spot)},
+                {
+                    "Tradable component": "$1 riskless payoff at T",
+                    "Unit price today": float(exp(-rate * maturity)),
+                },
+            ]
+            valuation_rows.extend(
+                {
+                    "Tradable component": f"Call, K = {float(strike_value):g}",
+                    "Unit price today": float(prices[float(strike_value)]["call"]),
+                }
+                for strike_value in strikes
+            )
+            st.dataframe(
+                pd.DataFrame(valuation_rows),
+                width="stretch",
+                hide_index=True,
+                column_config={"Unit price today": st.column_config.NumberColumn(format="$%.4f")},
+            )
+            attempt_costs = component_costs(
+                spot,
+                rate,
+                maturity,
+                float(attempt_stock),
+                float(attempt_bond),
+                attempt_positions,
+                prices,
+            )
+            attempt_value = float(attempt_costs["Signed cost"].sum())
+            student_value = st.number_input(
+                "Your no-arbitrage value today",
+                value=0.0,
+                step=0.50,
+                key=f"student_value_{attempt_id}",
+            )
+            valuation_checked_key = f"valuation_checked_{attempt_id}"
+            if st.button("Check my valuation", type="primary", key=f"check_value_{attempt_id}"):
+                st.session_state[valuation_checked_key] = True
+            if st.session_state.get(valuation_checked_key):
+                valuation_error = abs(float(student_value) - attempt_value)
+                if valuation_error <= 0.02:
+                    st.success(
+                        f"Correct. The target payout is worth {signed_money(attempt_value)} today by the Law of One Price."
+                    )
+                else:
+                    st.warning(
+                        "Not yet. Multiply every signed quantity by its unit price today, including discounting "
+                        "the riskless terminal payoff, and then add the signed component costs."
+                    )
+                with st.expander("Valuation tip · Keep quantities and signs visible"):
+                    st.write(
+                        "Long stock and purchased calls have positive signed costs. Short stock and written calls "
+                        "have negative signed costs. A terminal bond payoff B costs B exp(-rT) today."
+                    )
+                if st.button("Reveal the component valuation arithmetic", key=f"reveal_value_{attempt_id}"):
+                    st.session_state[f"valuation_revealed_{attempt_id}"] = True
+                if st.session_state.get(f"valuation_revealed_{attempt_id}"):
+                    st.dataframe(
+                        attempt_costs,
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Quantity": st.column_config.NumberColumn(format="%.5g"),
+                            "Unit price": st.column_config.NumberColumn(format="$%.4f"),
+                            "Signed cost": st.column_config.NumberColumn(format="$%.4f"),
+                        },
+                    )
+                    st.metric("Sum of signed component costs", signed_money(attempt_value))
 
         st.subheader("Guided slope hints")
         with st.expander("Hint 1 · What is the leftmost slope?"):
@@ -519,15 +832,19 @@ elif navigation == "4 · Calls-only replication":
                                        margin=dict(l=20, r=20, t=30, b=20),
                                        legend=dict(orientation="h", y=1.08))
             mark_replication_strikes(solution_fig, strikes, [pos["strike"] for pos in active_calls])
-            st.plotly_chart(solution_fig, width="stretch")
-            success_box("Replication check", "The target and replication lie on top of one another. Each call quantity equals the change in slope at its strike.")
+            st.plotly_chart(solution_fig, width="stretch", key="replication_solution_chart")
+            success_box(
+                "Replication and economic meaning",
+                "The target and replication lie on top of one another. Each call quantity equals the change in "
+                f"slope at its strike. {replication_problem['interpretation']}",
+            )
     elif not attempted:
         st.info("Try the replication before opening any hints. Select **Check my attempted replication** when ready.")
 
     why_it_matters("This turns a contract diagram into a portfolio. Begin with the stock slope, use calls to change the slope at each boundary, and use the riskless bond to establish the vertical level.")
-    st.caption("Version 1 exactly handles continuous piecewise-linear payouts. A discontinuous digital payoff requires an extension or an approximation with tightly spaced call spreads.")
+    st.caption("Version 2 exactly handles continuous piecewise-linear payouts. A discontinuous digital payoff requires an approximation with tightly spaced call positions.")
 
-elif navigation == "5 · Guided applications":
+elif navigation == "6 · Guided applications":
     case_low, case_high = strikes[2], strikes[-3]
     middle = len(strikes) // 2
     nearby = chain.iloc[max(0, middle - 1): min(len(chain), middle + 2)].copy()
@@ -536,7 +853,7 @@ elif navigation == "5 · Guided applications":
         "Call price": st.column_config.NumberColumn(format="$%.4f"),
         "Put price": st.column_config.NumberColumn(format="$%.4f"),
     }
-    st.title("5. Guided applications")
+    st.title("6. Guided applications")
     hero("Choose a contract from prices and protection", "Each case supplies hypothetical option prices. Recommend a strike by explaining when protection begins, what favorable outcome remains, and what the premium costs.")
     tabs = st.tabs(["Input-cost insurance", "Portfolio protection", "Premium and obligation", "Merger payout"])
     with tabs[0]:
@@ -615,14 +932,31 @@ elif navigation == "5 · Guided applications":
     why_it_matters("Strategy names are secondary. The durable skill is translating a business exposure into signed component payoffs and then explaining who bears each state of the world.")
 
 else:
-    st.title("6. Knowledge check and question generator")
+    st.title("7. Knowledge check and question generator")
     hero("Practice without grades", "Choose an answer, inspect the explanation, and generate a numerical question from the current market.")
-    q_index = st.selectbox("Conceptual question", range(len(QUESTIONS)), format_func=lambda i: f"Question {i + 1}")
+    st.session_state.setdefault("knowledge_shuffle_seed", secrets.randbits(63))
+    question_col, shuffle_col = st.columns([0.72, 0.28])
+    q_index = question_col.selectbox(
+        "Conceptual question",
+        range(len(QUESTIONS)),
+        format_func=lambda i: f"Question {i + 1} of {len(QUESTIONS)}",
+    )
+    if shuffle_col.button("Reshuffle answers", width="stretch"):
+        st.session_state.knowledge_shuffle_seed = secrets.randbits(63)
+        st.rerun()
     q = QUESTIONS[q_index]
+    shuffled = shuffled_choices(q, st.session_state.knowledge_shuffle_seed)
     st.markdown(f"### {q['question']}")
-    choice = st.radio("Select one answer", q["choices"], key=f"choice_{q_index}")
+    choice = st.radio(
+        "Select one answer",
+        shuffled,
+        key=f"choice_{q_index}_{st.session_state.knowledge_shuffle_seed}",
+        index=None,
+    )
     if st.button("Check my reasoning", type="primary"):
-        if choice == q["answer"]:
+        if choice is None:
+            st.warning("Select an answer before checking your reasoning.")
+        elif choice == q["answer"]:
             st.success("Correct. " + q["explanation"])
         else:
             st.error("Not yet. " + q["explanation"])
